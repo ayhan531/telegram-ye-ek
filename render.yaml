@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: telegram-uye-aktarici
+    env: python
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false

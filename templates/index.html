@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telegram Üye Aktarıcı | MTProto Pro</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Özel kaydırma çubuğu */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    .pulse-dot {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-brand-500 selection:text-white">
+
+  <!-- Üst Menü / Navbar -->
+  <nav class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 lg:px-8 py-3">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white text-xl shadow-lg shadow-sky-500/20">
+          <i class="fa-brands fa-telegram"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            Telegram Üye Aktarıcı
+            <span class="text-xs px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium">Render Ready</span>
+          </h1>
+          <p class="text-xs text-slate-400">QR Kod Girişli • MTProto User Client</p>
+        </div>
+      </div>
+
+      <!-- Sağ Taraf: Kullanıcı Bilgisi ve Ayarlar -->
+      <div class="flex items-center space-x-3">
+        <div id="user-info-bar" class="hidden items-center space-x-3 bg-slate-800/80 border border-slate-700/60 rounded-full py-1.5 px-3">
+          <div class="w-7 h-7 rounded-full bg-sky-600 flex items-center justify-center text-white text-xs font-bold" id="user-avatar">
+            U
+          </div>
+          <div class="text-xs">
+            <span id="user-name" class="font-semibold text-slate-200 block leading-tight">Yükleniyor...</span>
+            <span id="user-sub" class="text-slate-400 text-[10px] block leading-tight">@username</span>
+          </div>
+          <button onclick="logout()" title="Çıkış Yap" class="text-slate-400 hover:text-rose-400 ml-1 transition">
+            <i class="fa-solid fa-right-from-bracket text-xs"></i>
+          </button>
+        </div>
+
+        <button onclick="openSettingsModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-medium rounded-lg transition flex items-center gap-1.5">
+          <i class="fa-solid fa-gear"></i>
+          <span>API Ayarları</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Ana İçerik -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8 space-y-6">
+
+    <!-- UYARI / BİLGİ ŞERİDİ (Eğer API ID/Hash yoksa) -->
+    <div id="config-alert" class="hidden p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <i class="fa-solid fa-triangle-exclamation text-xl text-amber-400"></i>
+        <div class="text-sm">
+          <span class="font-semibold">Telegram API ID ve API Hash gerekli!</span>
+          <span class="text-amber-400/80 block text-xs mt-0.5">my.telegram.org adresinden ücretsiz alıp sağ üstteki "API Ayarları" butonundan girebilirsiniz.</span>
+        </div>
+      </div>
+      <button onclick="openSettingsModal()" class="px-3 py-1.5 bg-amber-500 text-slate-950 font-semibold text-xs rounded-lg hover:bg-amber-400 transition">
+        Şimdi Gir
+      </button>
+    </div>
+
+    <!-- 1. ADIM: QR KOD GİRİŞ EKRANI (Oturum kapalıysa görünür) -->
+    <div id="login-section" class="hidden">
+      <div class="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:p-8 shadow-2xl relative overflow-hidden text-center">
+        <div class="w-14 h-14 mx-auto rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-2xl mb-4">
+          <i class="fa-solid fa-qrcode"></i>
+        </div>
+        <h2 class="text-xl font-bold text-white mb-1">Telegram ile Giriş Yap</h2>
+        <p class="text-xs text-slate-400 mb-6">
+          Telefonunuzda Telegram'ı açın: <strong class="text-slate-300">Ayarlar > Cihazlar > QR Kod Tara</strong>
+        </p>
+
+        <!-- QR Kod Görünümü -->
+        <div class="relative bg-white p-4 rounded-xl inline-block shadow-inner mx-auto min-w-[220px] min-h-[220px] flex items-center justify-center">
+          <div id="qr-loading" class="flex flex-col items-center justify-center text-slate-800 space-y-2">
+            <i class="fa-solid fa-circle-notch fa-spin text-3xl text-sky-600"></i>
+            <span class="text-xs font-semibold">QR Kod Oluşturuluyor...</span>
+          </div>
+          <img id="qr-image" class="hidden w-52 h-52 object-contain" alt="Telegram QR Kodu">
+        </div>
+
+        <!-- Durum Bildirimi -->
+        <div class="mt-4 flex items-center justify-center gap-2 text-xs text-slate-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span>
+          <span id="qr-status-text">QR Kod bekleniyor...</span>
+        </div>
+
+        <button onclick="startQrLogin()" class="mt-4 text-xs text-sky-400 hover:text-sky-300 transition flex items-center justify-center gap-1 mx-auto">
+          <i class="fa-solid fa-arrows-rotate"></i> Yeniden Oluştur
+        </button>
+
+        <!-- 2FA Şifre Giriş Alanı (İstenirse) -->
+        <div id="two-fa-container" class="hidden mt-6 pt-4 border-t border-slate-800 text-left">
+          <div class="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl mb-3">
+            <span class="text-xs text-indigo-300 font-semibold block flex items-center gap-1.5">
+              <i class="fa-solid fa-shield-halved"></i> İki Adımlı Doğrulama (2FA)
+            </span>
+            <p class="text-[11px] text-indigo-200/80 mt-1">Hesabınızda ek şifre aktif. Lütfen Telegram şifrenizi girin.</p>
+          </div>
+          <div class="space-y-2">
+            <input type="password" id="two-fa-input" placeholder="Telegram Bulut Şifreniz" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+            <button onclick="submit2FA()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition shadow-lg shadow-indigo-600/30">
+              Şifreyi Onayla
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. VE 3. ADIMLAR: ÇALIŞMA PANELİ (Giriş yapılmışsa görünür) -->
+    <div id="dashboard-section" class="hidden space-y-6">
+
+      <!-- GRUP SEÇİMLERİ (KAYNAK VE HEDEF) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- HEDEF GRUP KARTI (Admin Olunan Grup) -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-bullseye"></i> Hedef Grup (Admin Hesabınız)
+              </span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-medium">
+                Üyelerin Ekleneceği Yer
+              </span>
+            </div>
+            <p class="text-xs text-slate-400">
+              Giriş yaptığınız hesabın <strong class="text-slate-200">yönetici (admin)</strong> olduğu grubu seçin veya linkini/kullanıcı adını girin.
+            </p>
+
+            <!-- Admin Grupları Açılır Menü -->
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Yönetici Olduğunuz Gruplar:</label>
+              <select id="target-admin-select" onchange="onAdminSelectChange(this)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500">
+                <option value="">-- Grubunuzu Listeden Seçin --</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2 text-xs text-slate-500 font-medium">
+              <span class="flex-1 h-[1px] bg-slate-800"></span>
+              <span>VEYA MANUEL GİRİN</span>
+              <span class="flex-1 h-[1px] bg-slate-800"></span>
+            </div>
+
+            <!-- Manuel Hedef Grup Girişi -->
+            <div>
+              <input type="text" id="target-group-input" placeholder="Grup Linki / @grup_adi / ID" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500">
+            </div>
+          </div>
+
+          <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <span class="flex items-center gap-1 text-slate-400">
+              <i class="fa-solid fa-shield-check text-emerald-400"></i> Bu grupta üye ekleme yetkiniz olmalıdır.
+            </span>
+          </div>
+        </div>
+
+        <!-- KAYNAK GRUP KARTI (Üyelerin Çekileceği Grup) -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-users"></i> Kaynak Grup (Üyeleri Çek)
+              </span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20 font-medium">
+                Üyelerin Alınacağı Yer
+              </span>
+            </div>
+            <p class="text-xs text-slate-400">
+              Üyelerini çekmek istediğiniz herhangi bir açık/üye olduğunuz grubun linkini veya kullanıcı adını girin.
+            </p>
+
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Kaynak Grup Adı / Linki:</label>
+              <div class="relative">
+                <input type="text" id="source-group-input" placeholder="Örn: https://t.me/ornekgrup veya @ornekgrup" class="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500">
+                <i class="fa-solid fa-link absolute left-3 top-3.5 text-slate-500 text-xs"></i>
+              </div>
+            </div>
+
+            <div class="pt-2">
+              <button id="btn-scrape" onclick="scrapeMembers()" class="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-sky-600/30 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-download"></i>
+                <span>Gruptaki Üyeleri Çek ve Listele</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <span id="scrape-status" class="text-slate-400">Kaynak grup girip butona basın.</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ÇEKİLEN ÜYELER VE AKTARIM KONTROL PANELİ -->
+      <div id="members-section" class="hidden bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+        
+        <!-- Üye Listesi Başlık & Hızlı Filtre Barı -->
+        <div class="p-4 lg:p-5 border-b border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-base font-bold text-white" id="group-title-display">Grup Üyeleri</h3>
+              <span id="badge-total-members" class="px-2 py-0.5 rounded-full bg-slate-800 text-sky-400 border border-slate-700 text-xs font-semibold">0 Üye</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5">
+              İstediğiniz üyeleri seçip hedef gruba aktarabilir veya seçtikleriniz hariç tümünü aktarabilirsiniz.
+            </p>
+          </div>
+
+          <!-- Arama ve Hızlı Seçim Butonları -->
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="relative min-w-[200px]">
+              <input type="text" id="member-search" oninput="filterMemberList()" placeholder="İsim veya @kullanıcı..." class="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500">
+              <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-slate-500 text-xs"></i>
+            </div>
+            
+            <button onclick="selectAll(true)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 font-medium transition">
+              Tümünü Seç
+            </button>
+            <button onclick="selectAll(false)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 font-medium transition">
+              Kaldır
+            </button>
+            <button onclick="selectOnlyActive()" class="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-medium transition">
+              Aktifleri Seç
+            </button>
+            <button onclick="invertSelection()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 font-medium transition">
+              Tersine Çevir
+            </button>
+          </div>
+        </div>
+
+        <!-- AKTARIM AYARLARI VE ÇALIŞTIRMA MODLARI (KULLANICININ İSTEDİĞİ 2 MOD) -->
+        <div class="p-4 bg-slate-900/60 border-b border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+          
+          <!-- MOD SEÇİMİ -->
+          <div class="md:col-span-6 space-y-2">
+            <span class="text-xs font-bold text-slate-300 uppercase tracking-wide block">Aktarım Modunu Belirleyin:</span>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label class="flex items-center p-3 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 cursor-pointer transition">
+                <input type="radio" name="transfer_mode" value="include" checked class="text-emerald-500 focus:ring-0 mr-2.5">
+                <div>
+                  <span class="text-xs font-semibold text-slate-100 block">Seçilenleri Aktar</span>
+                  <span class="text-[10px] text-slate-400 block">Sadece işaretli üyeler eklenir</span>
+                </div>
+              </label>
+
+              <label class="flex items-center p-3 rounded-xl border border-slate-700 bg-slate-800/70 hover:bg-slate-800 cursor-pointer transition">
+                <input type="radio" name="transfer_mode" value="exclude" class="text-indigo-500 focus:ring-0 mr-2.5">
+                <div>
+                  <span class="text-xs font-semibold text-indigo-300 block">Seçilenler HARİÇ Aktar</span>
+                  <span class="text-[10px] text-slate-400 block">İşaretliler atlanır, diğerleri eklenir</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- GECİKME (DELAY) SÜRESİ -->
+          <div class="md:col-span-3 space-y-1">
+            <label class="text-xs font-medium text-slate-300 flex items-center justify-between">
+              <span>İstek Gecikmesi:</span>
+              <span id="delay-label" class="text-sky-400 font-bold">3.0 sn</span>
+            </label>
+            <input type="range" id="delay-slider" min="1.0" max="15.0" step="0.5" value="3.0" oninput="document.getElementById('delay-label').innerText = this.value + ' sn'" class="w-full accent-sky-500">
+            <span class="text-[10px] text-slate-500 block leading-tight">Telegram spam kısıtından korunmak için 3-5 sn önerilir.</span>
+          </div>
+
+          <!-- BAŞLAT / DURDUR BUTONLARI -->
+          <div class="md:col-span-3 flex flex-col justify-end space-y-2">
+            <button id="btn-start-transfer" onclick="startTransfer()" class="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2">
+              <i class="fa-solid fa-paper-plane"></i>
+              <span>Aktarımı Başlat</span>
+            </button>
+
+            <button id="btn-stop-transfer" onclick="stopTransfer()" class="hidden w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-2">
+              <i class="fa-solid fa-hand"></i>
+              <span>İşlemi Durdur</span>
+            </button>
+          </div>
+
+        </div>
+
+        <!-- ÜYE TABLOSU -->
+        <div class="max-h-[420px] overflow-y-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="bg-slate-950/60 sticky top-0 z-10 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="py-2.5 px-4 w-12 text-center">
+                  <input type="checkbox" id="check-all" onchange="toggleAllCheckboxes(this.checked)" class="rounded text-sky-600 focus:ring-0">
+                </th>
+                <th class="py-2.5 px-4">Kullanıcı</th>
+                <th class="py-2.5 px-4">Kullanıcı Adı</th>
+                <th class="py-2.5 px-4">Telegram ID</th>
+                <th class="py-2.5 px-4">Son Görülme / Durum</th>
+              </tr>
+            </thead>
+            <tbody id="member-table-body" class="divide-y divide-slate-800/60 font-mono text-slate-300">
+              <!-- Üyeler JavaScript ile dinamik basılacak -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Alt Durum Çubuğu -->
+        <div class="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <div>
+            Seçili: <strong class="text-white" id="selected-count">0</strong> / <span id="total-visible-count">0</span>
+          </div>
+          <div class="text-[11px] text-slate-500">
+            * Botlar ve silinmiş hesaplar aktarıma dahil edilmez.
+          </div>
+        </div>
+
+      </div>
+
+      <!-- CANLI AKTARIM İLERLEMESİ VE LOG TERMİNALİ -->
+      <div id="transfer-progress-card" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-4">
+        
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-emerald-500 pulse-dot" id="progress-indicator"></span>
+            <h3 class="text-sm font-bold text-white" id="progress-status-heading">Aktarım Devam Ediyor...</h3>
+          </div>
+          <span id="progress-percentage" class="text-xs font-bold text-emerald-400 font-mono">0%</span>
+        </div>
+
+        <!-- İlerleme Çubuğu -->
+        <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+          <div id="progress-bar" class="bg-gradient-to-r from-sky-500 to-emerald-500 h-full w-0 transition-all duration-300"></div>
+        </div>
+
+        <!-- Sayaç İstatistikleri -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div class="p-2.5 rounded-xl bg-slate-800/60 border border-slate-800">
+            <span class="text-[10px] text-slate-400 uppercase font-semibold block">Toplam Hedef</span>
+            <span class="text-sm font-bold text-white font-mono" id="stat-total">0</span>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-800/60 border border-slate-800">
+            <span class="text-[10px] text-emerald-400 uppercase font-semibold block">Başarılı</span>
+            <span class="text-sm font-bold text-emerald-400 font-mono" id="stat-success">0</span>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-800/60 border border-slate-800">
+            <span class="text-[10px] text-rose-400 uppercase font-semibold block">Başarısız / Atlanan</span>
+            <span class="text-sm font-bold text-rose-400 font-mono" id="stat-failed">0</span>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-800/60 border border-slate-800">
+            <span class="text-[10px] text-slate-400 uppercase font-semibold block">Kalan</span>
+            <span class="text-sm font-bold text-slate-300 font-mono" id="stat-remaining">0</span>
+          </div>
+        </div>
+
+        <!-- Canlı Log Terminali -->
+        <div class="space-y-1">
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span>Canlı İşlem Günlüğü (Console):</span>
+            <button onclick="clearLogs()" class="hover:text-white transition">Temizle</button>
+          </div>
+          <div id="terminal-logs" class="bg-slate-950 border border-slate-800 rounded-xl p-3 h-48 overflow-y-auto font-mono text-[11px] space-y-1 text-slate-300 shadow-inner">
+            <div class="text-slate-500 italic">Henüz bir işlem kaydı yok...</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- AYARLAR MODAL (API ID & API HASH) -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-sky-400"></i> Telegram API Ayarları
+        </h3>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white transition">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div class="p-3 bg-sky-500/10 border border-sky-500/20 rounded-xl text-xs text-sky-300">
+          <strong>Nereden Alınır?</strong><br>
+          1. <a href="https://my.telegram.org" target="_blank" class="underline font-bold text-sky-200">my.telegram.org</a> adresine girin.<br>
+          2. Telefon numaranızla giriş yapıp <em>API development tools</em> sekmesine tıklayın.<br>
+          3. Oluşan <strong>api_id</strong> ve <strong>api_hash</strong> değerlerini buraya yapıştırın.
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">API ID (Sayı):</label>
+          <input type="text" id="modal-api-id" placeholder="Örn: 12345678" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">API HASH (String):</label>
+          <input type="password" id="modal-api-hash" placeholder="Örn: 9a8b7c6d5e4f3a2b1c..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500">
+        </div>
+
+        <button onclick="saveSettings()" class="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-sky-600/30">
+          Ayarları Kaydet
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT KODLARI -->
+  <script>
+    // Global Durum Değişkenleri
+    let appState = {
+      has_config: false,
+      auth_state: 'NOT_CONNECTED',
+      user: null,
+      admin_groups: [],
+      scraped_members: [],
+      pollTimer: null,
+      transferPollTimer: null,
+    };
+
+    // Sayfa Yüklendiğinde
+    window.addEventListener('DOMContentLoaded', async () => {
+      await fetchStatus();
+      setInterval(fetchTransferStatus, 2500); // Aktarım loglarını periyodik kontrol et
+    });
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        
+        appState.has_config = data.has_config;
+        appState.auth_state = data.auth_state;
+        appState.user = data.user;
+
+        // Config Alert
+        if (!data.has_config) {
+          document.getElementById('config-alert').classList.remove('hidden');
+        } else {
+          document.getElementById('config-alert').classList.add('hidden');
+        }
+
+        // Oturum Durumu
+        if (data.auth_state === 'AUTHORIZED' && data.user) {
+          showDashboard(data.user);
+        } else {
+          showLoginScreen(data.auth_state, data.auth_message);
+        }
+
+      } catch (err) {
+        console.error("Status hatası:", err);
+      }
+    }
+
+    function showLoginScreen(state, message) {
+      document.getElementById('dashboard-section').classList.add('hidden');
+      document.getElementById('user-info-bar').classList.add('hidden');
+      document.getElementById('user-info-bar').classList.remove('flex');
+      document.getElementById('login-section').classList.remove('hidden');
+
+      if (appState.has_config && state === 'NOT_CONNECTED') {
+        startQrLogin();
+      }
+    }
+
+    function showDashboard(user) {
+      document.getElementById('login-section').classList.add('hidden');
+      document.getElementById('dashboard-section').classList.remove('hidden');
+      
+      const infoBar = document.getElementById('user-info-bar');
+      infoBar.classList.remove('hidden');
+      infoBar.classList.add('flex');
+
+      document.getElementById('user-name').innerText = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+      document.getElementById('user-sub').innerText = user.username ? '@' + user.username : 'ID: ' + user.id;
+      document.getElementById('user-avatar').innerText = (user.first_name || 'U').charAt(0).toUpperCase();
+
+      loadAdminGroups();
+    }
+
+    // QR LOGIN AKIŞI
+    async function startQrLogin() {
+      if (!appState.has_config) {
+        openSettingsModal();
+        return;
+      }
+
+      document.getElementById('qr-loading').classList.remove('hidden');
+      document.getElementById('qr-image').classList.add('hidden');
+      document.getElementById('qr-status-text').innerText = "QR Kod Hazırlanıyor...";
+
+      try {
+        const res = await fetch('/api/qr/start', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.status === 'AUTHORIZED') {
+          fetchStatus();
+          return;
+        }
+
+        if (data.success && data.qr_image) {
+          displayQr(data.qr_image);
+          startQrPolling();
+        } else if (data.error) {
+          document.getElementById('qr-status-text').innerText = data.error;
+        }
+      } catch (err) {
+        document.getElementById('qr-status-text').innerText = "Bağlantı hatası: " + err.message;
+      }
+    }
+
+    function displayQr(b64) {
+      const img = document.getElementById('qr-image');
+      img.src = b64;
+      img.classList.remove('hidden');
+      document.getElementById('qr-loading').classList.add('hidden');
+      document.getElementById('qr-status-text').innerText = "QR kod hazır! Telefonunuzdan taratın.";
+    }
+
+    function startQrPolling() {
+      if (appState.pollTimer) clearInterval(appState.pollTimer);
+
+      appState.pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/qr/poll');
+          const data = await res.json();
+
+          if (data.qr_image) {
+            document.getElementById('qr-image').src = data.qr_image;
+          }
+
+          if (data.auth_state === 'WAITING_PASSWORD') {
+            document.getElementById('two-fa-container').classList.remove('hidden');
+            document.getElementById('qr-status-text').innerText = "İki Adımlı Doğrulama (2FA) Şifresi Gerekiyor!";
+          } else if (data.auth_state === 'AUTHORIZED') {
+            clearInterval(appState.pollTimer);
+            fetchStatus();
+          } else if (data.auth_state === 'ERROR') {
+            document.getElementById('qr-status-text').innerText = data.auth_message;
+          }
+        } catch (err) {
+          console.error("Poll hatası", err);
+        }
+      }, 2000);
+    }
+
+    async function submit2FA() {
+      const pwd = document.getElementById('two-fa-input').value.trim();
+      if (!pwd) return alert("Lütfen şifrenizi girin.");
+
+      try {
+        const res = await fetch('/api/qr/2fa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('two-fa-container').classList.add('hidden');
+          fetchStatus();
+        } else {
+          alert(data.error || "2FA şifresi kabul edilmedi.");
+        }
+      } catch (err) {
+        alert("Hata: " + err.message);
+      }
+    }
+
+    async function logout() {
+      if (!confirm("Oturumu kapatmak istediğinize emin misiniz?")) return;
+      await fetch('/api/logout', { method: 'POST' });
+      location.reload();
+    }
+
+    // ADMİN GRUPLARI LİSTELEME
+    async function loadAdminGroups() {
+      try {
+        const res = await fetch('/api/admin-groups');
+        const data = await res.json();
+        const select = document.getElementById('target-admin-select');
+        select.innerHTML = '<option value="">-- Grubunuzu Listeden Seçin --</option>';
+
+        if (data.groups && data.groups.length > 0) {
+          data.groups.forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.username || g.id;
+            opt.innerText = `${g.title} (${g.members_count} üye) ${g.username ? '['+g.username+']' : ''}`;
+            select.appendChild(opt);
+          });
+        } else {
+          const opt = document.createElement('option');
+          opt.disabled = true;
+          opt.innerText = "Yönetici olduğunuz grup bulunamadı (aşağıdan manuel girin)";
+          select.appendChild(opt);
+        }
+      } catch (err) {
+        console.error("Admin grupları çekilemedi:", err);
+      }
+    }
+
+    function onAdminSelectChange(sel) {
+      if (sel.value) {
+        document.getElementById('target-group-input').value = sel.value;
+      }
+    }
+
+    // KAYNAK GRUP ÜYELERİNİ ÇEKME
+    async function scrapeMembers() {
+      const source = document.getElementById('source-group-input').value.trim();
+      if (!source) {
+        alert("Lütfen kaynak grup linki veya @kullanıcıadını girin.");
+        return;
+      }
+
+      const btn = document.getElementById('btn-scrape');
+      const statusSpan = document.getElementById('scrape-status');
+      
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Üyeler Taranıyor (Lütfen Bekleyin)...</span>';
+      statusSpan.innerText = "Grup taranıyor, bu işlem büyük gruplarda 15-30 sn sürebilir...";
+
+      try {
+        const res = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_group: source })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          appState.scraped_members = data.members;
+          document.getElementById('group-title-display').innerText = data.group_title || "Kaynak Grup";
+          document.getElementById('badge-total-members').innerText = `${data.total_count} Üye Çekildi`;
+          document.getElementById('members-section').classList.remove('hidden');
+          renderMemberList(data.members);
+          statusSpan.innerText = `Başarılı! ${data.total_count} üye listelendi.`;
+        } else {
+          alert(data.error || "Üyeler çekilemedi.");
+          statusSpan.innerText = "Hata: " + (data.error || "Bilinmiyor");
+        }
+      } catch (err) {
+        alert("Bağlantı hatası: " + err.message);
+        statusSpan.innerText = "İstek başarısız oldu.";
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-download"></i> <span>Gruptaki Üyeleri Çek ve Listele</span>';
+      }
+    }
+
+    // ÜYELERİ TABLOYA BASMA
+    function renderMemberList(members) {
+      const tbody = document.getElementById('member-table-body');
+      tbody.innerHTML = '';
+
+      members.forEach((m, idx) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-800/40 transition member-row";
+        tr.dataset.id = m.id;
+        tr.dataset.name = m.name.toLowerCase();
+        tr.dataset.username = (m.username || '').toLowerCase();
+        tr.dataset.active = m.is_active ? "1" : "0";
+        tr.dataset.bot = m.is_bot ? "1" : "0";
+
+        // Durum Rozeti Rengi
+        let statusBadge = `<span class="text-slate-400">${m.status}</span>`;
+        if (m.is_bot) {
+          statusBadge = `<span class="text-purple-400 font-semibold"><i class="fa-solid fa-robot"></i> Bot</span>`;
+        } else if (m.status.includes('Çevrimiçi')) {
+          statusBadge = `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-circle text-[8px]"></i> Çevrimiçi</span>`;
+        } else if (m.status.includes('Yakın')) {
+          statusBadge = `<span class="text-sky-400"><i class="fa-solid fa-circle text-[8px]"></i> Yakın Zamanda</span>`;
+        }
+
+        tr.innerHTML = `
+          <td class="py-2.5 px-4 text-center">
+            <input type="checkbox" value="${m.id}" onchange="updateSelectedCount()" class="member-check rounded text-sky-600 focus:ring-0 cursor-pointer" ${m.is_bot ? 'disabled' : 'checked'}>
+          </td>
+          <td class="py-2.5 px-4 font-sans text-slate-200 font-medium">
+            ${escapeHtml(m.name)}
+          </td>
+          <td class="py-2.5 px-4 text-sky-400">
+            ${m.username ? `<a href="https://t.me/${m.username.replace('@','')}" target="_blank" class="hover:underline">${m.username}</a>` : '<span class="text-slate-600">-</span>'}
+          </td>
+          <td class="py-2.5 px-4 text-slate-400">
+            ${m.id}
+          </td>
+          <td class="py-2.5 px-4">
+            ${statusBadge}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      updateSelectedCount();
+    }
+
+    function escapeHtml(text) {
+      if (!text) return "";
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    // FİLTRELEME VE SEÇİM FONKSİYONLARI
+    function filterMemberList() {
+      const q = document.getElementById('member-search').value.toLowerCase();
+      const rows = document.querySelectorAll('.member-row');
+      rows.forEach(r => {
+        const name = r.dataset.name;
+        const uname = r.dataset.username;
+        if (name.includes(q) || uname.includes(q)) {
+          r.style.display = '';
+        } else {
+          r.style.display = 'none';
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function toggleAllCheckboxes(checked) {
+      document.querySelectorAll('.member-check:not(:disabled)').forEach(cb => {
+        if (cb.closest('tr').style.display !== 'none') {
+          cb.checked = checked;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function selectAll(state) {
+      document.getElementById('check-all').checked = state;
+      toggleAllCheckboxes(state);
+    }
+
+    function selectOnlyActive() {
+      document.querySelectorAll('.member-row').forEach(r => {
+        const cb = r.querySelector('.member-check');
+        if (!cb || cb.disabled) return;
+        if (r.dataset.active === "1" && r.dataset.bot === "0") {
+          cb.checked = true;
+        } else {
+          cb.checked = false;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function invertSelection() {
+      document.querySelectorAll('.member-check:not(:disabled)').forEach(cb => {
+        if (cb.closest('tr').style.display !== 'none') {
+          cb.checked = !cb.checked;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+      const allChecks = document.querySelectorAll('.member-check:not(:disabled)');
+      const checkedBoxes = Array.from(allChecks).filter(cb => cb.checked && cb.closest('tr').style.display !== 'none');
+      const visibleRows = Array.from(allChecks).filter(cb => cb.closest('tr').style.display !== 'none');
+      
+      document.getElementById('selected-count').innerText = checkedBoxes.length;
+      document.getElementById('total-visible-count').innerText = visibleRows.length;
+    }
+
+    // AKTARIM İŞLEMİ (TRANSFER)
+    async function startTransfer() {
+      const targetGroup = document.getElementById('target-group-input').value.trim();
+      if (!targetGroup) {
+        alert("Lütfen önce Hedef Grubu seçin veya linkini/kullanıcı adını girin!");
+        return;
+      }
+
+      // Mod Seçimi: include (seçilenleri aktar) ya da exclude (seçilenler hariç aktar)
+      const mode = document.querySelector('input[name="transfer_mode"]:checked').value;
+      const delay = parseFloat(document.getElementById('delay-slider').value) || 3.0;
+
+      // Seçili ID'leri topla
+      const checkedBoxes = document.querySelectorAll('.member-check:checked');
+      const selectedIds = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
+
+      if (mode === 'include' && selectedIds.length === 0) {
+        alert("Seçilenleri Aktar modundasınız ancak hiçbir üye seçmediniz!");
+        return;
+      }
+
+      const confirmMsg = mode === 'include'
+        ? `Seçtiğiniz ${selectedIds.length} üye hedef gruba aktarılacak. Başlatılsın mı?`
+        : `Seçtiğiniz ${selectedIds.length} üye HARİÇ, listedeki diğer tüm üyeler hedef gruba aktarılacak. Başlatılsın mı?`;
+
+      if (!confirm(confirmMsg)) return;
+
+      try {
+        const payload = {
+          target_group: targetGroup,
+          user_ids: selectedIds,
+          exclude_mode: (mode === 'exclude'),
+          all_members: appState.scraped_members,
+          delay_seconds: delay
+        };
+
+        const res = await fetch('/api/transfer/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          document.getElementById('transfer-progress-card').classList.remove('hidden');
+          document.getElementById('btn-start-transfer').classList.add('hidden');
+          document.getElementById('btn-stop-transfer').classList.remove('hidden');
+          fetchTransferStatus();
+        } else {
+          alert(data.error || "Aktarım başlatılamadı.");
+        }
+      } catch (err) {
+        alert("Hata: " + err.message);
+      }
+    }
+
+    async function stopTransfer() {
+      if (!confirm("Aktarım işlemini durdurmak istediğinize emin misiniz?")) return;
+      try {
+        const res = await fetch('/api/transfer/stop', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('btn-stop-transfer').classList.add('hidden');
+          document.getElementById('btn-start-transfer').classList.remove('hidden');
+        }
+      } catch (err) {
+        alert("Hata: " + err.message);
+      }
+    }
+
+    // AKTARIM DURUMU & LOG TAKİBİ
+    async function fetchTransferStatus() {
+      try {
+        const res = await fetch('/api/transfer/status');
+        const data = await res.json();
+
+        const stats = data.stats;
+        const isRunning = data.is_running;
+
+        if (isRunning || stats.status !== 'idle') {
+          document.getElementById('transfer-progress-card').classList.remove('hidden');
+          
+          document.getElementById('stat-total').innerText = stats.total;
+          document.getElementById('stat-success').innerText = stats.success;
+          document.getElementById('stat-failed').innerText = stats.failed;
+          
+          const rem = Math.max(0, stats.total - stats.processed);
+          document.getElementById('stat-remaining').innerText = rem;
+
+          const pct = stats.total > 0 ? Math.round((stats.processed / stats.total) * 100) : 0;
+          document.getElementById('progress-percentage').innerText = pct + '%';
+          document.getElementById('progress-bar').style.width = pct + '%';
+
+          if (isRunning) {
+            document.getElementById('btn-start-transfer').classList.add('hidden');
+            document.getElementById('btn-stop-transfer').classList.remove('hidden');
+            document.getElementById('progress-status-heading').innerText = "Aktarım Devam Ediyor...";
+            document.getElementById('progress-indicator').className = "w-3 h-3 rounded-full bg-emerald-500 pulse-dot";
+          } else {
+            document.getElementById('btn-stop-transfer').classList.add('hidden');
+            document.getElementById('btn-start-transfer').classList.remove('hidden');
+            document.getElementById('progress-status-heading').innerText = stats.message || "İşlem Tamamlandı.";
+            document.getElementById('progress-indicator').className = "w-3 h-3 rounded-full bg-slate-500";
+          }
+
+          // Logları Bas
+          renderLogs(data.logs);
+        }
+      } catch (err) {
+        console.error("Transfer status poll hatası:", err);
+      }
+    }
+
+    function renderLogs(logs) {
+      if (!logs || logs.length === 0) return;
+      const term = document.getElementById('terminal-logs');
+      term.innerHTML = '';
+      logs.forEach(l => {
+        const div = document.createElement('div');
+        let colorClass = "text-slate-300";
+        if (l.level === "success") colorClass = "text-emerald-400";
+        else if (l.level === "warning") colorClass = "text-amber-400";
+        else if (l.level === "error") colorClass = "text-rose-400 font-bold";
+
+        div.className = `${colorClass} flex items-start gap-2`;
+        div.innerHTML = `<span class="text-slate-600">[${l.time}]</span> <span>${escapeHtml(l.message)}</span>`;
+        term.appendChild(div);
+      });
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearLogs() {
+      document.getElementById('terminal-logs').innerHTML = '<div class="text-slate-500 italic">Kayıtlar temizlendi.</div>';
+    }
+
+    // AYARLAR MODAL
+    function openSettingsModal() {
+      document.getElementById('settings-modal').classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settings-modal').classList.add('hidden');
+    }
+
+    async function saveSettings() {
+      const apiId = document.getElementById('modal-api-id').value.trim();
+      const apiHash = document.getElementById('modal-api-hash').value.trim();
+
+      if (!apiId || !apiHash) {
+        alert("Lütfen API ID ve API HASH değerlerini eksiksiz girin.");
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_id: apiId, api_hash: apiHash })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("Ayarlar başarıyla kaydedildi!");
+          closeSettingsModal();
+          location.reload();
+        } else {
+          alert(data.error || "Ayarlar kaydedilemedi.");
+        }
+      } catch (err) {
+        alert("Hata: " + err.message);
+      }
+    }
+  </script>
+
+</body>
+</html>
