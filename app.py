@@ -1,14 +1,23 @@
 import os
+import secrets
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from telegram_service import telegram_service, save_config
+from database import (
+    create_user,
+    verify_user,
+    get_user_by_token,
+    create_session,
+    delete_session,
+    update_user_api,
+)
+from telegram_service import manager, UserTelegramService
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -18,17 +27,15 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Uygulama açılışında kayıtlı session varsa bağlanmayı dene
-    try:
-        await telegram_service.init_client()
-    except Exception as e:
-        print(f"Başlangıç bağlantı uyarısı: {e}")
     yield
-    # Uygulama kapanışında
-    if telegram_service.client and telegram_service.client.is_connected():
-        await telegram_service.client.disconnect()
+    for svc in manager.user_services.values():
+        if svc.client and svc.client.is_connected():
+            try:
+                await svc.client.disconnect()
+            except Exception:
+                pass
 
-app = FastAPI(title="Telegram Üye Aktarıcı Dashboard", lifespan=lifespan)
+app = FastAPI(title="Telegram Üye Aktarıcı (Çok Kullanıcılı)", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,10 +45,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Statik dosyaları bağla
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Request Modelleri
+# Auth Modelleri
+class RegisterLoginModel(BaseModel):
+    username: str
+    password: str
+
 class SettingsModel(BaseModel):
     api_id: str
     api_hash: str
@@ -59,30 +69,123 @@ class TransferModel(BaseModel):
     all_members: Optional[List[Dict[str, Any]]] = None
     delay_seconds: float = 3.0
 
+# Kimlik Doğrulama Dependency
+async def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    token = None
+    if authorization:
+        parts = authorization.split(" ")
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+        else:
+            token = authorization
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum açmanız gerekiyor.")
+
+    user = get_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Geçersiz oturum. Lütfen tekrar giriş yapın.")
+    return user
+
+def get_user_service(user: Dict[str, Any] = Depends(get_current_user)) -> UserTelegramService:
+    return manager.get_service(
+        user_id=user["id"],
+        username=user["username"],
+        api_id=user.get("api_id", ""),
+        api_hash=user.get("api_hash", "")
+    )
+
+# --- AUTH ENDPOINTS ---
+
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             return f.read()
-    return "<h1>Telegram Üye Aktarıcı Arayüzü Yükleniyor...</h1>"
+    return "<h1>Telegram Üye Aktarıcı Yükleniyor...</h1>"
+
+@app.post("/api/auth/register")
+async def register(data: RegisterLoginModel):
+    uname = data.username.strip()
+    pwd = data.password.strip()
+    if not uname or not pwd:
+        raise HTTPException(status_code=400, detail="İsim ve şifre boş bırakılamaz.")
+    
+    user = create_user(uname, pwd)
+    if not user:
+        raise HTTPException(status_code=400, detail="Bu isimde bir hesap zaten var. Başka bir isim seçin.")
+
+    token = secrets.token_hex(24)
+    create_session(user["id"], token)
+    return {
+        "success": True,
+        "token": token,
+        "user": {"id": user["id"], "username": user["username"], "has_api": False}
+    }
+
+@app.post("/api/auth/login")
+async def login(data: RegisterLoginModel):
+    uname = data.username.strip()
+    pwd = data.password.strip()
+    user = verify_user(uname, pwd)
+    if not user:
+        raise HTTPException(status_code=400, detail="İsim veya şifre hatalı!")
+
+    token = secrets.token_hex(24)
+    create_session(user["id"], token)
+    has_api = bool(user.get("api_id") and user.get("api_hash"))
+    return {
+        "success": True,
+        "token": token,
+        "user": {"id": user["id"], "username": user["username"], "has_api": has_api}
+    }
+
+@app.get("/api/auth/me")
+async def get_me(user: Dict[str, Any] = Depends(get_current_user)):
+    has_api = bool(user.get("api_id") and user.get("api_hash"))
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "has_api": has_api,
+        "api_id": user.get("api_id", ""),
+        "api_hash": (user.get("api_hash", "")[:4] + "****") if user.get("api_hash") else "",
+    }
+
+@app.post("/api/auth/logout")
+async def logout_auth(authorization: Optional[str] = Header(None)):
+    token = None
+    if authorization:
+        parts = authorization.split(" ")
+        token = parts[1] if len(parts) == 2 else authorization
+    if token:
+        delete_session(token)
+    return {"success": True}
+
+# --- TELEGRAM ENDPOINTS (KULLANICI BAZLI) ---
 
 @app.get("/api/status")
-async def get_status():
-    cfg = telegram_service.config
-    has_config = bool(cfg.get("api_id") and cfg.get("api_hash"))
+async def get_status(
+    user: Dict[str, Any] = Depends(get_current_user),
+    svc: UserTelegramService = Depends(get_user_service)
+):
+    has_config = bool(user.get("api_id") and user.get("api_hash"))
     return {
         "has_config": has_config,
-        "api_id": cfg.get("api_id", ""),
-        "api_hash": cfg.get("api_hash", "")[:4] + "****" if cfg.get("api_hash") else "",
-        "auth_state": telegram_service.auth_state,
-        "auth_message": telegram_service.auth_message,
-        "user": telegram_service.current_user,
-        "transfer_running": telegram_service.transfer_is_running,
+        "api_id": user.get("api_id", ""),
+        "api_hash": (user.get("api_hash", "")[:4] + "****") if user.get("api_hash") else "",
+        "auth_state": svc.auth_state,
+        "auth_message": svc.auth_message,
+        "user": svc.current_user,
+        "transfer_running": svc.transfer_is_running,
     }
 
 @app.post("/api/settings")
-async def save_settings(data: SettingsModel):
+async def save_settings(
+    data: SettingsModel,
+    user: Dict[str, Any] = Depends(get_current_user),
+    svc: UserTelegramService = Depends(get_user_service)
+):
     api_id = data.api_id.strip()
     api_hash = data.api_hash.strip()
     if not api_id or not api_hash:
@@ -93,51 +196,48 @@ async def save_settings(data: SettingsModel):
     except ValueError:
         raise HTTPException(status_code=400, detail="API ID sadece sayılardan oluşmalıdır.")
 
-    telegram_service.config["api_id"] = api_id
-    telegram_service.config["api_hash"] = api_hash
-    save_config(telegram_service.config)
-    
-    # Yeni client başlatmayı dene
-    await telegram_service.init_client()
-    return {"success": True, "message": "Ayarlar başarıyla kaydedildi."}
+    update_user_api(user["id"], api_id, api_hash)
+    svc.update_credentials(api_id, api_hash)
+    await svc.init_client()
+    return {"success": True, "message": "API Ayarları başarıyla kaydedildi."}
 
 @app.post("/api/qr/start")
-async def start_qr():
-    res = await telegram_service.start_qr_login()
+async def start_qr(svc: UserTelegramService = Depends(get_user_service)):
+    res = await svc.start_qr_login()
     return res
 
 @app.get("/api/qr/poll")
-async def poll_qr():
+async def poll_qr(svc: UserTelegramService = Depends(get_user_service)):
     return {
-        "auth_state": telegram_service.auth_state,
-        "auth_message": telegram_service.auth_message,
-        "qr_image": telegram_service.qr_image_b64,
-        "user": telegram_service.current_user,
+        "auth_state": svc.auth_state,
+        "auth_message": svc.auth_message,
+        "qr_image": svc.qr_image_b64,
+        "user": svc.current_user,
     }
 
 @app.post("/api/qr/2fa")
-async def submit_2fa(data: PasswordModel):
-    res = await telegram_service.submit_2fa_password(data.password)
+async def submit_2fa(data: PasswordModel, svc: UserTelegramService = Depends(get_user_service)):
+    res = await svc.submit_2fa_password(data.password)
     return res
 
-@app.post("/api/logout")
-async def logout():
-    res = await telegram_service.logout()
+@app.post("/api/telegram/logout")
+async def telegram_logout(svc: UserTelegramService = Depends(get_user_service)):
+    res = await svc.logout()
     return res
 
 @app.get("/api/admin-groups")
-async def get_admin_groups():
-    groups = await telegram_service.get_admin_groups()
+async def get_admin_groups(svc: UserTelegramService = Depends(get_user_service)):
+    groups = await svc.get_admin_groups()
     return {"groups": groups}
 
 @app.post("/api/scrape")
-async def scrape_members(data: ScrapeModel):
-    res = await telegram_service.scrape_source_members(data.source_group)
+async def scrape_members(data: ScrapeModel, svc: UserTelegramService = Depends(get_user_service)):
+    res = await svc.scrape_source_members(data.source_group)
     return res
 
 @app.post("/api/transfer/start")
-async def start_transfer(data: TransferModel):
-    res = await telegram_service.start_transfer(
+async def start_transfer(data: TransferModel, svc: UserTelegramService = Depends(get_user_service)):
+    res = await svc.start_transfer(
         target_group_ref=data.target_group,
         user_ids=data.user_ids,
         exclude_mode=data.exclude_mode,
@@ -147,16 +247,16 @@ async def start_transfer(data: TransferModel):
     return res
 
 @app.post("/api/transfer/stop")
-async def stop_transfer():
-    res = telegram_service.stop_transfer()
+async def stop_transfer(svc: UserTelegramService = Depends(get_user_service)):
+    res = svc.stop_transfer()
     return res
 
 @app.get("/api/transfer/status")
-async def get_transfer_status():
+async def get_transfer_status(svc: UserTelegramService = Depends(get_user_service)):
     return {
-        "is_running": telegram_service.transfer_is_running,
-        "stats": telegram_service.transfer_stats,
-        "logs": telegram_service.transfer_logs[-50:], # Son 50 log
+        "is_running": svc.transfer_is_running,
+        "stats": svc.transfer_stats,
+        "logs": svc.transfer_logs[-50:],
     }
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 .env
 config.json
+data/*.db
 sessions/*.session
 .vscode/
 .idea/
