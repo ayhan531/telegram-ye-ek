@@ -180,10 +180,20 @@ class UserTelegramService:
                 "qr_image": self.qr_image_b64,
                 "expires": self.qr_login_obj.expires.isoformat() if self.qr_login_obj.expires else None
             }
+        except errors.ApiIdInvalidError:
+            self.auth_state = "ERROR"
+            msg = "Telegram API ID veya API Hash geçersiz! Lütfen bilgilerinizi kontrol edin veya Resmi API'yi seçin."
+            self.auth_message = msg
+            return {"success": False, "error": msg}
         except Exception as e:
             self.auth_state = "ERROR"
-            self.auth_message = f"QR Kod oluşturulamadı: {str(e)}"
-            return {"success": False, "error": str(e)}
+            err_str = str(e)
+            if "combination is invalid" in err_str.lower() or "api_id_invalid" in err_str.lower():
+                msg = "Telegram API ID veya API Hash geçersiz! my.telegram.org'dan aldığınız bilgileri kontrol edin veya Resmi API'yi seçin."
+            else:
+                msg = f"Giriş hatası: {err_str}"
+            self.auth_message = msg
+            return {"success": False, "error": msg}
 
     async def _qr_wait_loop(self):
         while self.auth_state in ("QR_READY", "WAITING_PASSWORD"):

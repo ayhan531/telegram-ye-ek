@@ -180,6 +180,19 @@ async def get_status(
         "transfer_running": svc.transfer_is_running,
     }
 
+OFFICIAL_API_ID = "2040"
+OFFICIAL_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
+@app.post("/api/settings/default")
+async def set_default_api(
+    user: Dict[str, Any] = Depends(get_current_user),
+    svc: UserTelegramService = Depends(get_user_service)
+):
+    update_user_api(user["id"], OFFICIAL_API_ID, OFFICIAL_API_HASH)
+    svc.update_credentials(OFFICIAL_API_ID, OFFICIAL_API_HASH)
+    await svc.init_client()
+    return {"success": True, "message": "Resmi Telegram API bilgileri tanımlandı."}
+
 @app.post("/api/settings")
 async def save_settings(
     data: SettingsModel,
