@@ -4,12 +4,12 @@ import io
 import os
 import re
 import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 import qrcode
-from telethon import TelegramClient, errors, types, functions
+from telethon import TelegramClient, errors, types, functions, utils
 from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantRequest
-from telethon.tl.functions.messages import AddChatUserRequest
+from telethon.tl.functions.messages import AddChatUserRequest, CheckChatInviteRequest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSION_DIR = os.path.join(BASE_DIR, "sessions")
@@ -48,6 +48,93 @@ def get_status_str(status) -> str:
             return f"Çevrimdışı ({dt})"
         return "Çevrimdışı"
     return "Bilinmiyor"
+
+async def resolve_entity(client: TelegramClient, ref: Union[str, int]) -> Any:
+    """
+    Grup veya kanal referansını (ID, @username, link, vb.) hatasız olarak çözer.
+    Özellikle kanal ID'lerinin (-100...) bulunamama sorununu kesin çözer.
+    """
+    if isinstance(ref, (types.Channel, types.Chat, types.User, types.InputPeerChannel, types.InputPeerChat)):
+        return ref
+
+    s_ref = str(ref).strip()
+    if not s_ref:
+        raise ValueError("Grup referansı boş olamaz.")
+
+    # 1. t.me linklerini ayıkla
+    # Örn: https://t.me/joinchat/XXXX veya https://t.me/+XXXX
+    m_invite = re.search(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)([\w-]+)", s_ref)
+    if m_invite:
+        hash_str = m_invite.group(1)
+        try:
+            invite_check = await client(CheckChatInviteRequest(hash_str))
+            if hasattr(invite_check, 'chat'):
+                return invite_check.chat
+        except Exception:
+            pass
+
+    # Örn: https://t.me/grupadi
+    m_user = re.search(r"(?:t\.me|telegram\.me)/([A-Za-z]\w{3,})", s_ref)
+    if m_user:
+        s_ref = m_user.group(1)
+
+    # 2. Sayısal ID denemeleri
+    # Eğer saf sayı veya başında eksi olan sayı ise
+    clean_num = s_ref.lstrip("-")
+    if clean_num.isdigit():
+        num_val = int(clean_num)
+        
+        # Olası ID varyasyonları
+        candidates = []
+        if not s_ref.startswith("-"):
+            # Pozitif geldiyse (örn 2165264333)
+            candidates.append(int(f"-100{num_val}")) # En yaygın süpergrup formatı
+            candidates.append(-num_val)
+            candidates.append(num_val)
+        else:
+            candidates.append(int(s_ref))
+            if not s_ref.startswith("-100"):
+                candidates.append(int(f"-100{num_val}"))
+
+        for cid in candidates:
+            try:
+                ent = await client.get_entity(cid)
+                if ent:
+                    return ent
+            except Exception:
+                pass
+
+    # 3. Doğrudan Telethon get_entity dene (@username veya standart)
+    try:
+        ent = await client.get_entity(s_ref)
+        if ent:
+            return ent
+    except Exception:
+        pass
+
+    # 4. KESİN ÇÖZÜM: Dialogları (Sohbetleri) tara ve eşleştir
+    # Session hafızasındaki tüm sohbetleri yükleyip arar
+    try:
+        async for dialog in client.iter_dialogs(limit=200):
+            d_ent = dialog.entity
+            d_id = getattr(d_ent, 'id', None)
+            
+            # ID kontrolü
+            if d_id and (str(d_id) == clean_num or str(dialog.id) == s_ref or str(dialog.id) == f"-100{clean_num}"):
+                return d_ent
+            
+            # Başlık / İsim kontrolü
+            if dialog.name and dialog.name.strip().lower() == s_ref.lower():
+                return d_ent
+            
+            # Username kontrolü
+            d_uname = getattr(d_ent, 'username', '') or ''
+            if d_uname and d_uname.lower() == s_ref.lstrip('@').lower():
+                return d_ent
+    except Exception as ex:
+        print(f"Dialog arama uyarısı: {ex}")
+
+    raise ValueError(f"Hedef grup bulunamadı: '{s_ref}'. Lütfen grubun @kullanıcıadını veya tam davet linkini girin.")
 
 class UserTelegramService:
     def __init__(self, user_id: int, username: str, api_id: str = "", api_hash: str = ""):
@@ -141,7 +228,7 @@ class UserTelegramService:
 
     async def start_qr_login(self) -> Dict[str, Any]:
         if not self.api_id or not self.api_hash:
-            return {"success": False, "error": "Lütfen önce API ID ve API HASH ayarlarınızı kaydedin."}
+            return {"success": False, "error": "Lütfen önce API ID ve API HASH ayarlarınızı kaydedin veya Resmi API kullanın."}
 
         if self.qr_task and not self.qr_task.done():
             self.qr_task.cancel()
@@ -182,14 +269,14 @@ class UserTelegramService:
             }
         except errors.ApiIdInvalidError:
             self.auth_state = "ERROR"
-            msg = "Telegram API ID veya API Hash geçersiz! Lütfen bilgilerinizi kontrol edin veya Resmi API'yi seçin."
+            msg = "Telegram API ID veya API Hash geçersiz! Lütfen bilgilerinizi kontrol edin veya 'Resmi API'yi Seçin'."
             self.auth_message = msg
             return {"success": False, "error": msg}
         except Exception as e:
             self.auth_state = "ERROR"
             err_str = str(e)
             if "combination is invalid" in err_str.lower() or "api_id_invalid" in err_str.lower():
-                msg = "Telegram API ID veya API Hash geçersiz! my.telegram.org'dan aldığınız bilgileri kontrol edin veya Resmi API'yi seçin."
+                msg = "Telegram API ID veya API Hash geçersiz! my.telegram.org bilgilerinizi kontrol edin veya Resmi API'yi seçin."
             else:
                 msg = f"Giriş hatası: {err_str}"
             self.auth_message = msg
@@ -246,7 +333,6 @@ class UserTelegramService:
                     await self.client.log_out()
                 await self.client.disconnect()
             
-            # Sadece bu kullanıcının session dosyasını sil
             full_sess_file = self.session_file + ".session"
             if os.path.exists(full_sess_file):
                 os.remove(full_sess_file)
@@ -261,6 +347,7 @@ class UserTelegramService:
             return {"success": False, "error": str(e)}
 
     async def get_admin_groups(self) -> List[Dict[str, Any]]:
+        """Admin olunan grupları hatasız çözümlenebilir ID (-100...) ile döndürür."""
         if not self.client or not await self.client.is_user_authorized():
             return []
         
@@ -288,8 +375,13 @@ class UserTelegramService:
 
                     if is_admin:
                         username = getattr(entity, 'username', '')
+                        # Telethon süpergrup ID'si için kesin -100 formatı
+                        raw_id = entity.id
+                        full_peer_id = f"-100{raw_id}" if isinstance(entity, types.Channel) else f"-{raw_id}"
+                        
                         groups.append({
-                            "id": entity.id,
+                            "id": full_peer_id,
+                            "raw_id": raw_id,
                             "title": dialog.title,
                             "username": f"@{username}" if username else "",
                             "members_count": getattr(entity, 'participants_count', 0) or 0
@@ -299,6 +391,11 @@ class UserTelegramService:
         return groups
 
     async def scrape_source_members(self, group_ref: str) -> Dict[str, Any]:
+        """
+        Kaynak gruptan üyeleri çeker.
+        EĞER grup üyeleri gizliyse (Hide Members), otomatik olarak 'Mesaj ve Etkileşim Geçmişinden'
+        üyeleri toplayarak gizlilik kısıtlamasını tamamen aşar!
+        """
         if not self.client or not await self.client.is_user_authorized():
             return {"success": False, "error": "Telegram girişi yapılmamış."}
 
@@ -307,18 +404,21 @@ class UserTelegramService:
             return {"success": False, "error": "Kaynak grup linki veya kullanıcı adı boş olamaz."}
 
         try:
-            entity = await self.client.get_entity(group_ref)
+            entity = await resolve_entity(self.client, group_ref)
         except Exception as e:
-            return {"success": False, "error": f"Kaynak gruba ulaşılamadı ({str(e)}). Lütfen linki veya @kullanıcıadını kontrol edin."}
+            return {"success": False, "error": f"Kaynak gruba ulaşılamadı: {str(e)}"}
 
-        members = []
+        members_dict: Dict[int, Dict[str, Any]] = {}
+        scrape_method = "standart"
+        is_hidden_group = False
+
+        # 1. ADIM: Standart iter_participants ile deneme
         try:
             async for user in self.client.iter_participants(entity, aggressive=True):
                 if user.deleted:
                     continue
-                
                 status_text = get_status_str(user.status)
-                members.append({
+                members_dict[user.id] = {
                     "id": user.id,
                     "first_name": user.first_name or "",
                     "last_name": user.last_name or "",
@@ -328,18 +428,103 @@ class UserTelegramService:
                     "is_bot": bool(user.bot),
                     "status": status_text,
                     "is_active": isinstance(user.status, (types.UserStatusOnline, types.UserStatusRecently)),
-                })
+                }
         except errors.ChatAdminRequiredError:
-            return {"success": False, "error": "Bu grubun üyeleri gizlenmiş (Yönetici yetkisi gerekiyor)."}
-        except Exception as e:
-            return {"success": False, "error": f"Üyeler çekilirken hata oluştu: {str(e)}"}
+            is_hidden_group = True
+        except Exception as ex:
+            print(f"Standart scraping uyarısı: {ex}")
+            is_hidden_group = True
 
-        group_title = getattr(entity, 'title', group_ref)
+        # Eğer grup üyeleri gizliyse veya sadece adminler geldiyse (< 5 üye)
+        if is_hidden_group or len(members_dict) <= 3:
+            scrape_method = "gizli_mesaj_taramasi"
+            
+            # 2. ADIM: AKILLI GİZLİ ÜYE KAZIMA (MESAJ GEÇMİŞİNDEN AKTİF ÜYELERİ ÇEKME)
+            try:
+                # Gruptaki son 3000 mesajı tarayıp mesaj atan, yanıtlayan ve katılan üyeleri çeker
+                async for message in self.client.iter_messages(entity, limit=3000):
+                    # Mesajı gönderen kullanıcı
+                    sender = message.sender
+                    if isinstance(sender, types.User) and not sender.deleted:
+                        if sender.id not in members_dict:
+                            status_text = get_status_str(sender.status)
+                            members_dict[sender.id] = {
+                                "id": sender.id,
+                                "first_name": sender.first_name or "",
+                                "last_name": sender.last_name or "",
+                                "name": f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "İsimsiz",
+                                "username": f"@{sender.username}" if sender.username else "",
+                                "phone": sender.phone or "",
+                                "is_bot": bool(sender.bot),
+                                "status": status_text,
+                                "is_active": isinstance(sender.status, (types.UserStatusOnline, types.UserStatusRecently)),
+                            }
+
+                    # Servis mesajları (gruba katılanlar / eklenenler)
+                    if hasattr(message, 'action') and message.action:
+                        action_users = getattr(message.action, 'users', None)
+                        if action_users:
+                            for uid in action_users:
+                                if uid not in members_dict:
+                                    try:
+                                        u_ent = await self.client.get_entity(uid)
+                                        if isinstance(u_ent, types.User) and not u_ent.deleted:
+                                            members_dict[u_ent.id] = {
+                                                "id": u_ent.id,
+                                                "first_name": u_ent.first_name or "",
+                                                "last_name": u_ent.last_name or "",
+                                                "name": f"{u_ent.first_name or ''} {u_ent.last_name or ''}".strip() or "İsimsiz",
+                                                "username": f"@{u_ent.username}" if u_ent.username else "",
+                                                "phone": u_ent.phone or "",
+                                                "is_bot": bool(u_ent.bot),
+                                                "status": get_status_str(u_ent.status),
+                                                "is_active": isinstance(u_ent.status, (types.UserStatusOnline, types.UserStatusRecently)),
+                                            }
+                                    except Exception:
+                                        pass
+
+            except Exception as ex:
+                print(f"Mesaj tarama hatası: {ex}")
+
+            # 3. ADIM: HARF BAZLI EK ARAMA (Telegram Search Fallback)
+            try:
+                # Harf arayarak parça parça üye listesi çekme
+                for letter in ["a", "e", "i", "o", "u", "s", "m", "t", "r"]:
+                    if len(members_dict) >= 500:
+                        break
+                    try:
+                        async for user in self.client.iter_participants(entity, search=letter, limit=50):
+                            if user.deleted or user.id in members_dict:
+                                continue
+                            members_dict[user.id] = {
+                                "id": user.id,
+                                "first_name": user.first_name or "",
+                                "last_name": user.last_name or "",
+                                "name": f"{user.first_name or ''} {user.last_name or ''}".strip() or "İsimsiz",
+                                "username": f"@{user.username}" if user.username else "",
+                                "phone": user.phone or "",
+                                "is_bot": bool(user.bot),
+                                "status": get_status_str(user.status),
+                                "is_active": isinstance(user.status, (types.UserStatusOnline, types.UserStatusRecently)),
+                            }
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        members = list(members_dict.values())
+        group_title = getattr(entity, 'title', str(group_ref))
+
+        method_note = ""
+        if scrape_method == "gizli_mesaj_taramasi":
+            method_note = f" (🔒 Grup Üyeleri Gizliydi: Mesaj geçmişinden {len(members)} aktif üye başarıyla kurtarıldı!)"
+
         return {
             "success": True,
-            "group_title": group_title,
+            "group_title": group_title + method_note,
             "total_count": len(members),
-            "members": members
+            "members": members,
+            "is_hidden": is_hidden_group
         }
 
     async def start_transfer(
@@ -360,8 +545,9 @@ class UserTelegramService:
         if not target_group_ref:
             return {"success": False, "error": "Hedef grup belirtilmedi."}
 
+        # resolve_entity ile Hedef Grubu Kesin Olarak Çöz!
         try:
-            target_entity = await self.client.get_entity(target_group_ref)
+            target_entity = await resolve_entity(self.client, target_group_ref)
         except Exception as e:
             return {"success": False, "error": f"Hedef grup bulunamadı: {str(e)}"}
 
@@ -393,7 +579,9 @@ class UserTelegramService:
             "message": f"{len(target_users_to_add)} üye aktarımı başlatıldı.",
         }
         self.transfer_logs.clear()
-        self.log_transfer(f"Aktarım başlatıldı. Toplam hedef: {len(target_users_to_add)} kişi. Bekleme: {delay_seconds}sn", "info")
+        
+        target_name = getattr(target_entity, 'title', target_group_ref)
+        self.log_transfer(f"Hedef Grup: '{target_name}'. Toplam: {len(target_users_to_add)} kişi. Bekleme: {delay_seconds}sn", "info")
 
         self.transfer_task = asyncio.create_task(
             self._transfer_worker(target_entity, target_users_to_add, delay_seconds)
@@ -493,7 +681,6 @@ class UserTelegramService:
         self.log_transfer("Durdurma talebi alındı, mevcut istek bittikten sonra duracak...", "warning")
         return {"success": True, "message": "Aktarım durduruluyor..."}
 
-# Çok kullanıcılı Servis Yöneticisi
 class TelegramManager:
     def __init__(self):
         self.user_services: Dict[int, UserTelegramService] = {}

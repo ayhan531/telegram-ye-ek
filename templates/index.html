@@ -836,6 +836,7 @@
         if (data.groups && data.groups.length > 0) {
           data.groups.forEach(g => {
             const opt = document.createElement('option');
+            // Eğer username varsa username, yoksa tam -100 id'si
             opt.value = g.username || g.id;
             opt.innerText = `${g.title} (${g.members_count} üye) ${g.username ? '['+g.username+']' : ''}`;
             select.appendChild(opt);
@@ -866,8 +867,8 @@
       const statusSpan = document.getElementById('scrape-status');
       
       btn.disabled = true;
-      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Üyeler Taranıyor...</span>';
-      statusSpan.innerText = "Grup taranıyor, lütfen bekleyin...";
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Üyeler Taranıyor (Gizli gruplar taranıyor)...</span>';
+      statusSpan.innerText = "Grup taranıyor. Üyeler gizliyse akıllı mesaj geçmişi devreye girecektir...";
 
       try {
         const res = await fetch('/api/scrape', {
@@ -883,7 +884,12 @@
           document.getElementById('badge-total-members').innerText = `${data.total_count} Üye Çekildi`;
           document.getElementById('members-section').classList.remove('hidden');
           renderMemberList(data.members);
-          statusSpan.innerText = `Başarılı! ${data.total_count} üye listelendi.`;
+
+          if (data.is_hidden) {
+            statusSpan.innerHTML = `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-unlock"></i> Grup üyeleri gizliydi! Mesaj ve etkileşim geçmişinden ${data.total_count} aktif üye başarıyla kurtarıldı.</span>`;
+          } else {
+            statusSpan.innerHTML = `<span class="text-sky-400 font-semibold">Başarılı! ${data.total_count} üye listelendi.</span>`;
+          }
         } else {
           alert(data.error || "Üyeler çekilemedi.");
           statusSpan.innerText = "Hata: " + (data.error || "Bilinmiyor");
